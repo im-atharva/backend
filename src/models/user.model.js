@@ -54,7 +54,7 @@ const userSchema = new Schema(
 //context pata chahiye isliye function likha hai
 userSchema.pre("save", async function (next) {
   if (!this.isModified("password")) return next(); // string mai pass krna imp hai
-  this.password = bcrypt.hash(this.password, 10); //10 is salt
+  this.password = await bcrypt.hash(this.password, 10); //10 is salt
   next();
 });
 
