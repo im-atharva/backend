@@ -5,6 +5,19 @@ import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { upload } from "../middlewares/multer.middleware.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
 
+const generateAccessAndRefreshTokens = async (userId) => {
+  try {
+    const user = await findById(userId);
+    const accessToken = user.generateAccessToken();
+    const refreshToken = user.generateRefreshToken();
+
+    user.refreshToken = refreshToken; //db mai dalenge na
+    await user.save({ validateBeforeSave: false }); //save in db w/o validating or else password will be replaced
+
+    return { accessToken, refreshToken };
+  } catch {}
+};
+
 const registerUser = asyncHandler(async (req, res) => {
   const { username, email, password, fullName } = req.body;
   //valdiations
@@ -14,7 +27,7 @@ const registerUser = asyncHandler(async (req, res) => {
     throw new ApiError(400, "All fields are required");
   }
 
-  const existedUser = User.findOne({
+  const existedUser = await User.findOne({
     $or: [{ username }, { email }],
   });
 
@@ -24,7 +37,16 @@ const registerUser = asyncHandler(async (req, res) => {
 
   //as we have use middleware of multer in user.routes so we can do below for file handling(step4)
   const avatarLocalPath = req.files?.avatar[0]?.path;
-  const coverImageLocalPath = req.files?.coverImage[0].path;
+  // const coverImageLocalPath = req.files?.coverImage[0].path;
+  let coverImageLocalPath;
+  if (
+    req.files &&
+    Array.isArray(req.files.coverImage) &&
+    req.files.coverImage.length > 0
+  ) {
+    coverImageLocalPath = req.files?.coverImage[0].path;
+  }
+
   if (!avatarLocalPath) {
     throw new ApiError(400, "Avatar file is required!");
   }
@@ -49,7 +71,7 @@ const registerUser = asyncHandler(async (req, res) => {
   const createdUser = await User.findById(user._id).select(
     "-password -refreshToken"
   );
-  //.select initially sab selected hoga so u deselect these two things
+  //.select-> initially sab selected hoga so u deselect these two things
   if (!createdUser) {
     throw new ApiError(500, "Something went wrong while Registering user!");
   }
@@ -59,9 +81,83 @@ const registerUser = asyncHandler(async (req, res) => {
     .json(new ApiResponse(200, createdUser, "User Registered Successfully"));
 });
 
-export { registerUser };
+const loginUser = asyncHandler(async (req, res) => {
+  const { username, email, password } = req.body;
+  if (!username || !email) {
+    throw new ApiError(400, "username or email is required");
+  }
 
-//Steps / algo for user.models.js --------->
+  const user = await User.findOne({
+    $or: [{ username }, { email }],
+  });
+
+  if (!user) {
+    throw new ApiError(404, "User does not exist");
+  }
+
+  //we wrote this method so it is with user obj in db not User from mongoose
+  const isPasswordValid = await user.isPasswordCorrect(password);
+  if (!isPasswordValid) {
+    throw new ApiError(401, "Invalid user Credentials");
+  }
+
+  const { accessToken, refreshToken } = await generateAccessAndRefreshTokens(
+    user._id
+  );
+
+  const loggedInUser = await User.findById(user._id).select(
+    "-password -refreshToken"
+  );
+
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
+  return res
+    .status(200)
+    .cookie("accessToken", accessToken, options)
+    .cookie("refreshToken", refreshToken, options)
+    .json(
+      new ApiResponse(
+        200,
+        {
+          user: loggedInUser,
+          accessToken: accessToken,
+          refreshToken, //shorthand notation hai rt: rt, ke liye
+        },
+        "User Logged-in Successfully!"
+      )
+    );
+});
+
+const logoutUser = asyncHandler(async (req, res) => {
+  await User.findByIdAndUpdate(
+    req.user._id,
+    {
+      $set: {
+        refreshToken: undefined,
+      },
+    },
+    {
+      new: true, // after return ull get new value of data not old
+    }
+  );
+
+  const options = {
+    httpOnly: true,
+    secure: true,
+  };
+
+  return res
+    .status(200)
+    .clearCookie("accessToken", options)
+    .clearCookie("refreshToken", options)
+    .json(200, new ApiResponse(200, {}, "User Logged out Successfully!"));
+});
+
+export { registerUser, loginUser, logoutUser };
+
+//*Steps / algo for user.models.js SIGN_UP --------->
 
 //get user details from frontend
 //validation - not empty
@@ -72,3 +168,12 @@ export { registerUser };
 //remove password and refresh token field from response
 //check for user creation
 //return res
+
+//*Steps / algo for user.models.js LOGIN --------->
+
+//req body -> data
+//check for email/username
+//find user
+//check for password
+//check for access refresh tokens
+//send cookie & response msg for login

@@ -1,5 +1,8 @@
 {
     "editor.formatOnPaste": true,
     "editor.formatOnSave": true,
-    "files.autoSave": "off"
+    "files.autoSave": "off",
+    "workbench.editor.enablePreview": true,
+    "editor.fontVariations": false,
+    "editor.fontLigatures": true,
 }
