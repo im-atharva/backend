@@ -4,10 +4,11 @@ import { User } from "../models/user.model.js";
 import { uploadOnCloudinary } from "../utils/cloudinary.js";
 import { upload } from "../middlewares/multer.middleware.js";
 import { ApiResponse } from "../utils/ApiResponse.js";
-
+import jwt from "jsonwebtoken";
+import { trusted } from "mongoose";
 const generateAccessAndRefreshTokens = async (userId) => {
   try {
-    const user = await findById(userId);
+    const user = await User.findById(userId);
     const accessToken = user.generateAccessToken();
     const refreshToken = user.generateRefreshToken();
 
@@ -15,7 +16,12 @@ const generateAccessAndRefreshTokens = async (userId) => {
     await user.save({ validateBeforeSave: false }); //save in db w/o validating or else password will be replaced
 
     return { accessToken, refreshToken };
-  } catch {}
+  } catch (err) {
+    throw new ApiError(
+      500,
+      "Something went wrong while generating access & refresh token"
+    );
+  }
 };
 
 const registerUser = asyncHandler(async (req, res) => {
@@ -83,7 +89,7 @@ const registerUser = asyncHandler(async (req, res) => {
 
 const loginUser = asyncHandler(async (req, res) => {
   const { username, email, password } = req.body;
-  if (!username || !email) {
+  if (!username && !email) {
     throw new ApiError(400, "username or email is required");
   }
 
@@ -155,7 +161,52 @@ const logoutUser = asyncHandler(async (req, res) => {
     .json(200, new ApiResponse(200, {}, "User Logged out Successfully!"));
 });
 
-export { registerUser, loginUser, logoutUser };
+const refreshAccessToken = asyncHandler(async (req, res) => {
+  const incomingRefreshToken = req.cookie.refreshToken || req.body.refreshToken;
+  //req.body wala is for mobile devices
+  if (!incomingRefreshToken) {
+    throw new ApiError(401, "Unauthorized  request!");
+  }
+
+  try {
+    const decodedToken = jwt.verify(
+      incomingRefreshToken,
+      process.env.REFRESH_TOKEN_SECRET
+    );
+
+    const user = await User.findById(decodedToken?._id);
+    if (!user) {
+      throw new ApiError(401, "Invalid refresh token");
+    }
+
+    //now incoming wala verify it with db wala
+    if (incomingRefreshToken !== user?.refreshToken) {
+      throw new ApiError(401, "Refresh token is expired!");
+    }
+
+    const options = {
+      httpOnly: true,
+      secure: true,
+    };
+
+    const { rt, at } = await generateAccessAndRefreshTokens(user._id);
+    return res
+      .status(200)
+      .cookie("accessToken", at, options)
+      .cookie("refreshToken", rt, options)
+      .json(
+        new ApiResponse(
+          200,
+          { accessToken, refreshToken: rt },
+          "Access Token Refreshed!"
+        )
+      );
+  } catch (error) {
+    throw new ApiError(401, error?.message || "Invalid Refresh Token");
+  }
+});
+
+export { registerUser, loginUser, logoutUser, refreshAccessToken };
 
 //*Steps / algo for user.models.js SIGN_UP --------->
 
